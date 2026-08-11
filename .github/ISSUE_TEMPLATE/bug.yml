@@ -1,0 +1,33 @@
+name: Bug report
+description: Report incorrect snapshot, restore, recovery, or pruning behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: For security-sensitive path traversal or data-loss reports, use private vulnerability reporting instead.
+  - type: input
+    id: version
+    attributes:
+      label: ShadowGit version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands, expected behavior, actual behavior, and whether symlinks are present.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      render: shell
