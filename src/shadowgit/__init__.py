@@ -16,16 +16,16 @@ from shadowgit.repository import (
 )
 
 __all__ = [
-    'PruneResult',
-    'RestoreRecovery',
-    'ShadowRepo',
-    'ShadowRepoError',
-    'SnapshotDiff',
-    'SnapshotInfo',
-    'VerificationResult',
-    'DEFAULT_IGNORE_PATTERNS',
-    'build_ignore_matcher',
-    'build_pathspec',
+    "DEFAULT_IGNORE_PATTERNS",
+    "PruneResult",
+    "RestoreRecovery",
+    "ShadowRepo",
+    "ShadowRepoError",
+    "SnapshotDiff",
+    "SnapshotInfo",
+    "VerificationResult",
+    "build_ignore_matcher",
+    "build_pathspec",
 ]
 
-__version__ = '0.1.0'
+__version__ = "0.1.0"

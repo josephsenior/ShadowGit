@@ -1,8 +1,8 @@
 """pygit2-backed shadow repository for fast, unified workspace checkpoints.
 
 Provides a private bare git object-store (``ShadowRepo``) that lives in
-``~/.grinta/workspaces/<id>/rollback/shadow_repo/`` -- completely independent of any ``.git`` the
-workspace project may or may not have.  Every checkpoint is a pygit2
+``<workspace>/.shadowgit/shadow_repo/`` by default -- completely independent
+of any ``.git`` the workspace project may or may not have. Every checkpoint is a pygit2
 commit; no subprocess is ever spawned.
 
 Key design decisions
@@ -32,22 +32,22 @@ import shutil
 import stat
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Reserved workspace roots that must never be snapshotted or touched
-# during restore -- must stay in sync with workspace_checkpoint._RESERVED_ROOTS.
-_RESERVED_ROOTS: frozenset[str] = frozenset({'.git', '.shadowgit'})
+# during restore.
+_RESERVED_ROOTS: frozenset[str] = frozenset({".git", ".shadowgit"})
 
-_STAT_CACHE_FILENAME = 'stat_cache.json'
-_RESTORE_JOURNAL_FILENAME = 'restore_journal.json'
-_SHADOW_DIR_NAME = 'shadow_repo'
-_SHADOW_REF = 'refs/heads/shadow'
-_RECOVERY_REF = 'refs/shadowgit/recovery'
+_STAT_CACHE_FILENAME = "stat_cache.json"
+_RESTORE_JOURNAL_FILENAME = "restore_journal.json"
+_SHADOW_DIR_NAME = "shadow_repo"
+_SHADOW_REF = "refs/heads/shadow"
+_RECOVERY_REF = "refs/shadowgit/recovery"
 
 
 class ShadowRepoError(RuntimeError):
@@ -79,11 +79,11 @@ class SnapshotDiff:
 
     def to_dict(self) -> dict[str, str | list[str]]:
         return {
-            'before': self.before,
-            'after': self.after,
-            'added': list(self.added),
-            'modified': list(self.modified),
-            'deleted': list(self.deleted),
+            "before": self.before,
+            "after": self.after,
+            "added": list(self.added),
+            "modified": list(self.modified),
+            "deleted": list(self.deleted),
         }
 
 
@@ -97,9 +97,9 @@ class VerificationResult:
 
     def to_dict(self) -> dict[str, bool | int | list[str]]:
         return {
-            'valid': self.valid,
-            'snapshots_checked': self.snapshots_checked,
-            'errors': list(self.errors),
+            "valid": self.valid,
+            "snapshots_checked": self.snapshots_checked,
+            "errors": list(self.errors),
         }
 
 
@@ -127,10 +127,10 @@ class PruneResult:
 
     def to_dict(self) -> dict[str, int | dict[str, str]]:
         return {
-            'snapshots_before': self.snapshots_before,
-            'snapshots_after': self.snapshots_after,
-            'removed': self.removed,
-            'rewritten': dict(self.rewritten),
+            "snapshots_before": self.snapshots_before,
+            "snapshots_after": self.snapshots_after,
+            "removed": self.removed,
+            "rewritten": dict(self.rewritten),
         }
 
 
@@ -147,7 +147,7 @@ class ShadowRepo:
         workspace_root: Absolute path to the workspace being snapshotted.
         shadow_dir: Directory that will hold the bare pygit2 repository and
             the stat-cache sidecar.  Defaults to
-            ``<workspace_root>/.grinta/shadow_repo``.
+            ``<workspace_root>/.shadowgit/shadow_repo``.
 
     Example::
 
@@ -173,7 +173,7 @@ class ShadowRepo:
         self._shadow_dir = (
             Path(shadow_dir).resolve()
             if shadow_dir is not None
-            else self._workspace_root / '.shadowgit' / _SHADOW_DIR_NAME
+            else self._workspace_root / ".shadowgit" / _SHADOW_DIR_NAME
         )
         self._ignore = ignore
         self._reserved_roots = _RESERVED_ROOTS | frozenset(reserved_roots)
@@ -186,7 +186,7 @@ class ShadowRepo:
 
         self._lock = threading.Lock()
         self._repo = self._open_or_init_repo()
-        logger.debug('ShadowRepo ready at %s', self._shadow_dir)
+        logger.debug("ShadowRepo ready at %s", self._shadow_dir)
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,7 +202,7 @@ class ShadowRepo:
         """Absolute path of the private bare Git object store."""
         return self._shadow_dir
 
-    def snapshot(self, label: str = '') -> str:
+    def snapshot(self, label: str = "") -> str:
         """Snapshot the current workspace state and return a commit SHA.
 
         Only files whose ``(mtime_ns, size)`` changed since the last call
@@ -220,11 +220,11 @@ class ShadowRepo:
 
         """
         with self._lock:
-            self._require_no_pending_recovery('create a snapshot')
+            self._require_no_pending_recovery("create a snapshot")
             try:
                 return self._snapshot_locked(label)
             except self._pygit2.GitError as exc:
-                raise ShadowRepoError(f'pygit2 snapshot failed: {exc}') from exc
+                raise ShadowRepoError(f"pygit2 snapshot failed: {exc}") from exc
 
     def restore(
         self,
@@ -251,11 +251,11 @@ class ShadowRepo:
 
         """
         with self._lock:
-            self._require_no_pending_recovery('start another restore')
+            self._require_no_pending_recovery("start another restore")
             try:
                 return self._restore_locked(commit_sha, quarantine_dir=quarantine_dir)
             except self._pygit2.GitError as exc:
-                raise ShadowRepoError(f'pygit2 restore failed: {exc}') from exc
+                raise ShadowRepoError(f"pygit2 restore failed: {exc}") from exc
 
     @property
     def pending_recovery(self) -> RestoreRecovery | None:
@@ -279,9 +279,9 @@ class ShadowRepo:
                     recovery.backup_sha,
                     quarantine_dir=quarantine,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise ShadowRepoError(
-                    f'Restore recovery failed; journal preserved: {exc}'
+                    f"Restore recovery failed; journal preserved: {exc}"
                 ) from exc
             self._finish_restore_transaction()
             return result
@@ -298,13 +298,13 @@ class ShadowRepo:
 
         """
         with self._lock:
-            self._require_no_pending_recovery('prune snapshots')
+            self._require_no_pending_recovery("prune snapshots")
             snapshots = self.list_snapshots()
             known = {snapshot.sha for snapshot in snapshots}
             unknown = keep_shas - known
             if unknown:
                 raise ShadowRepoError(
-                    f'Cannot prune: unknown snapshot SHA(s): {", ".join(sorted(unknown))}'
+                    f"Cannot prune: unknown snapshot SHA(s): {', '.join(sorted(unknown))}"
                 )
 
             if not keep_shas:
@@ -328,7 +328,7 @@ class ShadowRepo:
                     None,
                     commit.author,
                     commit.committer,
-                    commit.message or '',
+                    commit.message or "",
                     commit.tree_id,
                     parent_ids,
                 )
@@ -360,7 +360,7 @@ class ShadowRepo:
             snapshots.append(
                 SnapshotInfo(
                     sha=str(commit.id),
-                    label=self._label_from_message(commit.message or ''),
+                    label=self._label_from_message(commit.message or ""),
                     timestamp=int(commit.commit_time),
                     file_count=self._count_tree_files(tree),
                 )
@@ -374,7 +374,7 @@ class ShadowRepo:
         tree = commit.peel(self._pygit2.Tree)
         return SnapshotInfo(
             sha=str(commit.id),
-            label=self._label_from_message(commit.message or ''),
+            label=self._label_from_message(commit.message or ""),
             timestamp=int(commit.commit_time),
             file_count=self._count_tree_files(tree),
         )
@@ -411,7 +411,7 @@ class ShadowRepo:
             try:
                 self._snapshot_file_oids(snapshot.sha)
             except Exception as exc:  # noqa: BLE001
-                errors.append(f'{snapshot.sha}: {exc}')
+                errors.append(f"{snapshot.sha}: {exc}")
         return VerificationResult(
             valid=not errors,
             snapshots_checked=len(snapshots),
@@ -462,7 +462,7 @@ class ShadowRepo:
                 blob_oid = repo.create_blob(data)
             except (pygit2.GitError, OSError) as exc:
                 logger.warning(
-                    'Skipping file %s in shadow snapshot: %s', rel_posix, exc
+                    "Skipping file %s in shadow snapshot: %s", rel_posix, exc
                 )
                 continue
 
@@ -479,11 +479,11 @@ class ShadowRepo:
             head_ref = repo.references.get(_SHADOW_REF)
             if head_ref is not None:
                 parents = [head_ref.peel(pygit2.Commit).id]
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Unable to read current shadow ref parent: %s", exc)
 
-        sig = pygit2.Signature('ShadowGit', 'snapshot@shadowgit.local')
-        msg = f'[shadowgit] {label}' if label else '[shadowgit] snapshot'
+        sig = pygit2.Signature("ShadowGit", "snapshot@shadowgit.local")
+        msg = f"[shadowgit] {label}" if label else "[shadowgit] snapshot"
         commit_oid = repo.create_commit(
             update_ref,
             sig,
@@ -499,11 +499,11 @@ class ShadowRepo:
             tree = repo.get(str(tree_oid))
             self._blob_cache = {}
             if tree is not None:
-                self._collect_entries(tree, '', self._blob_cache)
+                self._collect_entries(tree, "", self._blob_cache)
         except Exception:  # noqa: BLE001
             self._blob_cache = {}
 
-        logger.debug('Shadow snapshot created: %s', commit_sha)
+        logger.debug("Shadow snapshot created: %s", commit_sha)
         return commit_sha
 
     # ------------------------------------------------------------------
@@ -519,13 +519,13 @@ class ShadowRepo:
         """Core restore logic -- must be called with ``_lock`` held."""
         target = self._resolve_commit(commit_sha)
         if quarantine_dir is None:
-            transaction_id = f'{int(time.time() * 1000)}-{os.getpid()}'
-            qdir = self._shadow_dir.parent / f'restore_quarantine_{transaction_id}'
+            transaction_id = f"{int(time.time() * 1000)}-{os.getpid()}"
+            qdir = self._shadow_dir.parent / f"restore_quarantine_{transaction_id}"
         else:
             qdir = Path(quarantine_dir).expanduser().resolve()
 
         backup_sha = self._create_snapshot_commit(
-            f'recovery before restore {str(target.id)[:12]}',
+            f"recovery before restore {str(target.id)[:12]}",
             update_ref=_RECOVERY_REF,
         )
         recovery = RestoreRecovery(
@@ -543,10 +543,10 @@ class ShadowRepo:
             raise
         try:
             result = self._apply_snapshot(str(target.id), quarantine_dir=qdir)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ShadowRepoError(
-                'Restore was interrupted; run recover() or `shadowgit recover` '
-                f'before continuing: {exc}'
+                "Restore was interrupted; run recover() or `shadowgit recover` "
+                f"before continuing: {exc}"
             ) from exc
         self._finish_restore_transaction()
         return result
@@ -560,7 +560,7 @@ class ShadowRepo:
         commit = self._resolve_commit(commit_sha)
         tree = commit.peel(self._pygit2.Tree)
         entries: dict[str, _SnapshotEntry] = {}
-        self._walk_tree(tree, '', entries, self._repo)
+        self._walk_tree(tree, "", entries, self._repo)
         used_quarantine = self._quarantine_extras(entries, quarantine_dir)
         for rel_posix, entry in entries.items():
             prepared_quarantine = self._prepare_destination(
@@ -585,48 +585,48 @@ class ShadowRepo:
     ) -> None:
         """Recursively collect snapshot entries from a tree."""
         for entry in tree:
-            rel = f'{prefix}{entry.name}' if prefix else entry.name
-            if entry.type_str == 'blob':
+            rel = f"{prefix}{entry.name}" if prefix else entry.name
+            if entry.type_str == "blob":
                 blob = repo.get(entry.id)
                 if blob is not None:
                     out[rel] = _SnapshotEntry(bytes(blob.data), int(entry.filemode))
-            elif entry.type_str == 'tree':
+            elif entry.type_str == "tree":
                 subtree = repo.get(entry.id)
                 if subtree is not None:
-                    self._walk_tree(subtree, f'{rel}/', out, repo)
+                    self._walk_tree(subtree, f"{rel}/", out, repo)
 
     def _resolve_commit(self, commit_sha: str) -> Any:
         try:
             commit = self._repo.get(commit_sha)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ShadowRepoError(
-                f'Cannot resolve snapshot {commit_sha!r}: {exc}'
+                f"Cannot resolve snapshot {commit_sha!r}: {exc}"
             ) from exc
         if commit is None:
-            raise ShadowRepoError(f'Snapshot not found: {commit_sha!r}')
+            raise ShadowRepoError(f"Snapshot not found: {commit_sha!r}")
         try:
             return commit.peel(self._pygit2.Commit)
-        except Exception as exc:  # noqa: BLE001
-            raise ShadowRepoError(f'Object is not a snapshot: {commit_sha!r}') from exc
+        except Exception as exc:
+            raise ShadowRepoError(f"Object is not a snapshot: {commit_sha!r}") from exc
 
     def _snapshot_file_oids(self, commit_sha: str) -> dict[str, tuple[str, int]]:
         commit = self._resolve_commit(commit_sha)
         tree = commit.peel(self._pygit2.Tree)
         files: dict[str, tuple[str, int]] = {}
 
-        def walk(current: Any, prefix: str = '') -> None:
+        def walk(current: Any, prefix: str = "") -> None:
             for entry in current:
-                rel = f'{prefix}{entry.name}' if prefix else entry.name
-                if entry.type_str == 'blob':
+                rel = f"{prefix}{entry.name}" if prefix else entry.name
+                if entry.type_str == "blob":
                     blob = self._repo.get(entry.id)
                     if blob is None:
-                        raise ShadowRepoError(f'Missing blob {entry.id} for {rel}')
+                        raise ShadowRepoError(f"Missing blob {entry.id} for {rel}")
                     files[rel] = (str(entry.id), int(entry.filemode))
-                elif entry.type_str == 'tree':
+                elif entry.type_str == "tree":
                     subtree = self._repo.get(entry.id)
                     if subtree is None:
-                        raise ShadowRepoError(f'Missing tree {entry.id} for {rel}')
-                    walk(subtree, f'{rel}/')
+                        raise ShadowRepoError(f"Missing tree {entry.id} for {rel}")
+                    walk(subtree, f"{rel}/")
 
         walk(tree)
         return files
@@ -634,9 +634,9 @@ class ShadowRepo:
     def _count_tree_files(self, tree: Any) -> int:
         count = 0
         for entry in tree:
-            if entry.type_str == 'blob':
+            if entry.type_str == "blob":
                 count += 1
-            elif entry.type_str == 'tree':
+            elif entry.type_str == "tree":
                 subtree = self._repo.get(entry.id)
                 if subtree is not None:
                     count += self._count_tree_files(subtree)
@@ -645,11 +645,11 @@ class ShadowRepo:
     @staticmethod
     def _label_from_message(message: str) -> str:
         value = message.strip()
-        for prefix in ('[shadowgit] ', '[Grinta] '):
+        for prefix in ("[shadowgit] ", "[Grinta] "):
             if value.startswith(prefix):
                 return value[len(prefix) :]
-        if value in {'[shadowgit] snapshot', '[Grinta] snapshot'}:
-            return 'snapshot'
+        if value in {"[shadowgit] snapshot", "[Grinta] snapshot"}:
+            return "snapshot"
         return value
 
     def _quarantine_extras(
@@ -662,7 +662,7 @@ class ShadowRepo:
         used_quarantine: Path | None = None
 
         for item in sorted(
-            self._workspace_root.rglob('*'),
+            self._workspace_root.rglob("*"),
             key=lambda p: len(p.parts),
             reverse=True,
         ):
@@ -682,7 +682,7 @@ class ShadowRepo:
                 continue
 
             if item.is_dir() and not self._is_linklike(item):
-                has_child = any(sp.startswith(f'{rel_posix}/') for sp in snapshot_posix)
+                has_child = any(sp.startswith(f"{rel_posix}/") for sp in snapshot_posix)
                 if not has_child and rel_posix not in snapshot_posix:
                     quarantine_dir = self._move_to_quarantine(item, rel, quarantine_dir)
                     used_quarantine = quarantine_dir
@@ -732,7 +732,7 @@ class ShadowRepo:
         """Restore one Git tree entry without following existing symlinks."""
         if entry.mode == self._pygit2.GIT_FILEMODE_LINK:
             target = os.fsdecode(entry.data)
-            temp = dest.with_name(f'.{dest.name}.shadowgit-link-{os.getpid()}')
+            temp = dest.with_name(f".{dest.name}.shadowgit-link-{os.getpid()}")
             if os.path.lexists(temp):
                 temp.unlink()
             try:
@@ -745,7 +745,7 @@ class ShadowRepo:
             return
 
         self._atomic_write(dest, entry.data)
-        if os.name != 'nt':
+        if os.name != "nt":
             current_mode = stat.S_IMODE(dest.stat().st_mode)
             if entry.mode == self._pygit2.GIT_FILEMODE_BLOB_EXECUTABLE:
                 dest.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -760,16 +760,16 @@ class ShadowRepo:
     ) -> Path:
         if quarantine_dir is None:
             ts = int(time.time())
-            quarantine_dir = self._shadow_dir.parent / f'restore_quarantine_{ts}'
+            quarantine_dir = self._shadow_dir.parent / f"restore_quarantine_{ts}"
         quarantine_dir.mkdir(parents=True, exist_ok=True)
         target = quarantine_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if os.path.lexists(target):
-            target = target.with_name(f'{target.name}.{int(time.time() * 1000)}')
+            target = target.with_name(f"{target.name}.{int(time.time() * 1000)}")
         try:
             shutil.move(str(source), str(target))
         except OSError as exc:
-            raise ShadowRepoError(f'Failed to quarantine {source}: {exc}') from exc
+            raise ShadowRepoError(f"Failed to quarantine {source}: {exc}") from exc
         return quarantine_dir
 
     # ------------------------------------------------------------------
@@ -784,13 +784,13 @@ class ShadowRepo:
     ) -> None:
         """Recursively collect ``{path: (blob_oid, mode)}`` from a tree."""
         for entry in tree:
-            rel = f'{prefix}{entry.name}' if prefix else entry.name
-            if entry.type_str == 'blob':
+            rel = f"{prefix}{entry.name}" if prefix else entry.name
+            if entry.type_str == "blob":
                 out[rel] = (entry.id, int(entry.filemode))
-            elif entry.type_str == 'tree':
+            elif entry.type_str == "tree":
                 subtree = self._repo.get(entry.id)
                 if subtree is not None:
-                    self._collect_entries(subtree, f'{rel}/', out)
+                    self._collect_entries(subtree, f"{rel}/", out)
 
     # ------------------------------------------------------------------
     # Repo init
@@ -800,17 +800,17 @@ class ShadowRepo:
         """Open an existing shadow repo or initialise a fresh bare one."""
         pygit2 = self._pygit2
         repo_path = str(self._shadow_dir)
-        head_path = self._shadow_dir / 'HEAD'
-        objects_path = self._shadow_dir / 'objects'
+        head_path = self._shadow_dir / "HEAD"
+        objects_path = self._shadow_dir / "objects"
         if head_path.is_file() and objects_path.is_dir():
             repo = pygit2.Repository(repo_path)
-            logger.debug('Opened existing shadow repo at %s', repo_path)
+            logger.debug("Opened existing shadow repo at %s", repo_path)
         else:
             repo = pygit2.init_repository(repo_path, bare=True)
             # Disable line-ending normalisation so CRLF files are round-tripped
             # byte-for-byte on Windows.
-            repo.config['core.autocrlf'] = 'false'
-            logger.debug('Initialised new shadow repo at %s', repo_path)
+            repo.config["core.autocrlf"] = "false"
+            logger.debug("Initialised new shadow repo at %s", repo_path)
 
         # Seed blob cache from existing shadow HEAD so the very first snapshot
         # after a process restart can still use the stat-cache.
@@ -818,9 +818,9 @@ class ShadowRepo:
             ref = repo.references.get(_SHADOW_REF)
             if ref is not None:
                 tree = ref.peel(pygit2.Commit).peel(pygit2.Tree)
-                self._collect_entries(tree, '', self._blob_cache)
-        except Exception:  # noqa: BLE001
-            pass
+                self._collect_entries(tree, "", self._blob_cache)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Unable to warm the shadow repository cache: %s", exc)
 
         return repo
 
@@ -847,7 +847,7 @@ class ShadowRepo:
                     yield abs_dir, rel_dir.as_posix()
                     continue
                 if os.path.isjunction(abs_dir):
-                    logger.warning('Skipping Windows junction in snapshot: %s', rel_dir)
+                    logger.warning("Skipping Windows junction in snapshot: %s", rel_dir)
                     continue
                 kept_dirs.append(dirname)
             dirnames[:] = kept_dirs
@@ -870,9 +870,9 @@ class ShadowRepo:
             return False
         try:
             return bool(self._ignore(relative_path, is_dir))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ShadowRepoError(
-                f'Ignore callback failed for {relative_path!r}: {exc}'
+                f"Ignore callback failed for {relative_path!r}: {exc}"
             ) from exc
 
     @staticmethod
@@ -889,7 +889,7 @@ class ShadowRepo:
             return {}
         try:
             raw: dict[str, list[int]] = json.loads(
-                self._stat_cache_path.read_text(encoding='utf-8')
+                self._stat_cache_path.read_text(encoding="utf-8")
             )
             return {
                 k: (int(v[0]), int(v[1]), int(v[2]))
@@ -897,20 +897,20 @@ class ShadowRepo:
                 if len(v) == 3
             }
         except Exception as exc:  # noqa: BLE001
-            logger.warning('Failed to load shadow stat cache: %s', exc)
+            logger.warning("Failed to load shadow stat cache: %s", exc)
             return {}
 
     def _persist_stat_cache(self, cache: dict[str, tuple[int, int, int]]) -> None:
         try:
             payload = json.dumps(
                 {k: list(v) for k, v in cache.items()},
-                separators=(',', ':'),
+                separators=(",", ":"),
             )
-            tmp = self._stat_cache_path.with_suffix('.tmp')
-            tmp.write_text(payload, encoding='utf-8')
+            tmp = self._stat_cache_path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
             os.replace(str(tmp), str(self._stat_cache_path))
         except OSError as exc:
-            logger.warning('Failed to persist shadow stat cache: %s', exc)
+            logger.warning("Failed to persist shadow stat cache: %s", exc)
 
     # ------------------------------------------------------------------
     # Restore transaction persistence
@@ -920,29 +920,29 @@ class ShadowRepo:
         recovery = self._load_restore_journal()
         if recovery is not None:
             raise ShadowRepoError(
-                f'Cannot {operation}: an interrupted restore targeting '
-                f'{recovery.target_sha} requires recovery first'
+                f"Cannot {operation}: an interrupted restore targeting "
+                f"{recovery.target_sha} requires recovery first"
             )
 
     def _load_restore_journal(self) -> RestoreRecovery | None:
         if not self._restore_journal_path.exists():
             return None
         try:
-            payload = json.loads(self._restore_journal_path.read_text(encoding='utf-8'))
+            payload = json.loads(self._restore_journal_path.read_text(encoding="utf-8"))
             return RestoreRecovery(
-                target_sha=str(payload['target_sha']),
-                backup_sha=str(payload['backup_sha']),
-                quarantine_dir=str(payload['quarantine_dir']),
-                started_at=int(payload['started_at']),
+                target_sha=str(payload["target_sha"]),
+                backup_sha=str(payload["backup_sha"]),
+                quarantine_dir=str(payload["quarantine_dir"]),
+                started_at=int(payload["started_at"]),
             )
-        except Exception as exc:  # noqa: BLE001
-            raise ShadowRepoError(f'Restore journal is corrupt: {exc}') from exc
+        except Exception as exc:
+            raise ShadowRepoError(f"Restore journal is corrupt: {exc}") from exc
 
     def _persist_restore_journal(self, recovery: RestoreRecovery) -> None:
-        payload = json.dumps(recovery.to_dict(), separators=(',', ':'))
-        temp = self._restore_journal_path.with_suffix('.tmp')
+        payload = json.dumps(recovery.to_dict(), separators=(",", ":"))
+        temp = self._restore_journal_path.with_suffix(".tmp")
         try:
-            with temp.open('w', encoding='utf-8') as handle:
+            with temp.open("w", encoding="utf-8") as handle:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -962,13 +962,13 @@ class ShadowRepo:
         ref = self._repo.references.get(_SHADOW_REF)
         if ref is not None:
             tree = ref.peel(self._pygit2.Commit).peel(self._pygit2.Tree)
-            self._collect_entries(tree, '', self._blob_cache)
+            self._collect_entries(tree, "", self._blob_cache)
         self._persist_stat_cache({})
 
     def _git_filemode(self, os_mode: int) -> int:
         if stat.S_ISLNK(os_mode):
             return self._pygit2.GIT_FILEMODE_LINK
-        if os.name != 'nt' and os_mode & stat.S_IXUSR:
+        if os.name != "nt" and os_mode & stat.S_IXUSR:
             return self._pygit2.GIT_FILEMODE_BLOB_EXECUTABLE
         return self._pygit2.GIT_FILEMODE_BLOB
 
@@ -1011,8 +1011,8 @@ class ShadowRepo:
         import tempfile
 
         fd, tmp_name = tempfile.mkstemp(
-            prefix=f'.{dest.name}.',
-            suffix='.tmp',
+            prefix=f".{dest.name}.",
+            suffix=".tmp",
             dir=str(dest.parent),
         )
         os.close(fd)
@@ -1026,11 +1026,11 @@ class ShadowRepo:
 
 
 __all__ = [
-    'PruneResult',
-    'RestoreRecovery',
-    'ShadowRepo',
-    'ShadowRepoError',
-    'SnapshotDiff',
-    'SnapshotInfo',
-    'VerificationResult',
+    "PruneResult",
+    "RestoreRecovery",
+    "ShadowRepo",
+    "ShadowRepoError",
+    "SnapshotDiff",
+    "SnapshotInfo",
+    "VerificationResult",
 ]

@@ -13,6 +13,18 @@ require the directory to be a repository.
 It is designed for coding agents, migration tools, refactoring systems, IDEs,
 and automation that needs a fast recovery point before changing files.
 
+ShadowGit is a focused library, not a Git replacement: it gives a process a
+private, local safety net while leaving the workspace's normal Git repository
+untouched.
+
+## When to use it
+
+Use ShadowGit when a tool needs to make risky filesystem changes and offer a
+reliable undo point, especially when the directory may not be a Git repository.
+It is a good fit for agent tool calls, code migrations, IDE features, and
+automated refactoring. Use ordinary Git when you need collaboration, remotes,
+merges, or a human-maintained project history.
+
 ## Why ShadowGit?
 
 - **Invisible:** the default store lives under `.shadowgit`, separate from the
@@ -30,13 +42,14 @@ and automation that needs a fast recovery point before changing files.
 ## Install
 
 ```bash
-pipx install shadowgit
+# Install the repository checkout as a command-line tool
+pipx install git+https://github.com/josephsenior/ShadowGit.git
 ```
 
 For library use:
 
 ```bash
-python -m pip install shadowgit
+python -m pip install git+https://github.com/josephsenior/ShadowGit.git
 ```
 
 ShadowGit requires Python 3.12 or newer.
@@ -138,6 +151,16 @@ ruff format --check src tests
 pytest
 python -m build
 ```
+
+The test configuration includes the `src/` layout, so `python -m pytest` also
+works directly from a fresh checkout after installing the test dependencies.
+
+## Project status
+
+ShadowGit is currently alpha software. The restore and pruning APIs are
+covered by cross-platform CI, but consumers should still pin a version and
+exercise their own filesystem and symlink policies before using it in a
+production recovery workflow.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
